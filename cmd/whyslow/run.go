@@ -19,12 +19,12 @@ func cmdRun(ctx context.Context, args []string) error {
 	addr := fs.String("addr", "127.0.0.1:7777", "web UI address (the process list is private: keep it on loopback)")
 	dbPath := fs.String("db", defaultDBPath(), "SQLite database path")
 	useEBPF := fs.Bool("ebpf", false, "per-app network via eBPF (needs root and a BTF kernel)")
-	interval := fs.Duration("interval", time.Second, "sampling interval")
+	interval := fs.Duration("interval", time.Second, "sampling interval, whole seconds")
 	verbose := fs.Bool("v", false, "debug logging")
 	fs.Parse(args)
 	log := newLogger(*verbose)
-	if *interval < 100*time.Millisecond {
-		return fmt.Errorf("--interval must be at least 100ms")
+	if err := checkInterval(*interval); err != nil {
+		return err
 	}
 
 	// Plain TCP, not Go's default MPTCP: MPTCP subflows are kernel sockets
@@ -77,4 +77,15 @@ func cmdRun(ctx context.Context, args []string) error {
 func isLoopback(a net.Addr) bool {
 	ta, ok := a.(*net.TCPAddr)
 	return ok && ta.IP.IsLoopback()
+}
+
+// checkInterval accepts whole seconds only. The database keeps one row per
+// second (a faster sampler overwrote nine of every ten rows), and the
+// detector's windows are counted in samples, so a sub-second interval would
+// also shrink the two-minute baseline to seconds.
+func checkInterval(d time.Duration) error {
+	if d < time.Second || d%time.Second != 0 {
+		return fmt.Errorf("--interval must be a whole number of seconds, got %s", d)
+	}
+	return nil
 }
