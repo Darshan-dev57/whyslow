@@ -21,7 +21,7 @@ jobs:
       - name: go vet
         run: go vet ./...
       - name: staticcheck
-        run: go run honnef.co/go/tools/cmd/staticcheck@latest ./...
+        run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 -tags integration,ebpf ./...
       - name: unit tests (race)
         run: CGO_ENABLED=1 go test -race -count=1 ./...
       - name: build
@@ -50,6 +50,8 @@ jobs:
         run: |
           uname -r
           ls -l /sys/kernel/btf/vmlinux
+      # Runner kernels have the BPF JIT, so this exercises the fentry/fexit
+      # path; the socket-owner fallback is covered on JIT-less kernels.
       - name: load eBPF programs and check per-PID bytes
         run: |
           go test -c -tags ebpf -o netbpf.test ./internal/netbpf/

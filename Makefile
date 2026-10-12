@@ -5,7 +5,7 @@ LDFLAGS  := -s -w -X main.version=$(VERSION)
 
 export CGO_ENABLED ?= 0
 
-.PHONY: all build test race lint integration ebpf-test run clean
+.PHONY: all build test race lint integration ebpf-test doctor run clean
 
 all: lint test build
 
@@ -21,7 +21,7 @@ race:
 lint:
 	@test -z "$$(gofmt -l .)" || (echo "gofmt needed:"; gofmt -l .; exit 1)
 	go vet ./...
-	staticcheck ./...
+	go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 -tags integration,ebpf ./...
 
 integration:
 	go test -tags integration -count=1 -v ./test/integration/
@@ -32,6 +32,9 @@ ebpf-test:
 	go test -c -tags ebpf -o netbpf.test ./internal/netbpf/
 	sudo ./netbpf.test -test.v -test.count=1
 	rm -f netbpf.test
+
+doctor: build
+	./$(BIN) doctor
 
 run: build
 	./$(BIN) run
