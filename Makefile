@@ -5,7 +5,7 @@ LDFLAGS  := -s -w -X main.version=$(VERSION)
 
 export CGO_ENABLED ?= 0
 
-.PHONY: all build test race lint integration ebpf-test doctor run clean
+.PHONY: all build test race lint integration ebpf-test fuzz doctor run clean
 
 all: lint test build
 
@@ -25,6 +25,13 @@ lint:
 
 integration:
 	go test -tags integration -count=1 -v ./test/integration/
+
+# Each fuzz target for FUZZTIME (the overnight run used 300s per target).
+FUZZTIME ?= 30s
+fuzz:
+	for t in ProcStat Cmdline Stat MemInfo DiskStats NetDev IO Statm Uptime; do \
+		go test -run '^$$' -fuzz "^FuzzParse$$t\$$" -fuzztime $(FUZZTIME) ./internal/procfs || exit 1; done
+	go test -run '^$$' -fuzz '^FuzzGroup$$' -fuzztime $(FUZZTIME) ./internal/apps
 
 # The eBPF test loads programs into the kernel, so it needs root.
 # The test binary is built as your user and only executed with sudo.
