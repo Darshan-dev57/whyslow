@@ -23,6 +23,7 @@ type fakeTask struct {
 	comm          string
 	cmdline       string // NUL-separated
 	ticks, start  uint64
+	cticks        uint64 // CPU time of reaped children
 	rssPages      uint64
 	read, written uint64
 	noIO, kernel  bool
@@ -60,8 +61,8 @@ func (f *fakeProc) task(k fakeTask) {
 	if k.kernel {
 		flags = 2129984
 	}
-	f.write(dir+"/stat", fmt.Sprintf("%d (%s) S %d %d %d 0 -1 %d 0 0 0 0 %d 0 0 0 20 0 1 0 %d 1000 %d 0 0 0 0 0 0 0 0 0 0 0 0 0 17 0 0 0 0 0 0\n",
-		k.pid, k.comm, k.ppid, k.pid, k.pid, flags, k.ticks, k.start, k.rssPages))
+	f.write(dir+"/stat", fmt.Sprintf("%d (%s) S %d %d %d 0 -1 %d 0 0 0 0 %d 0 %d 0 20 0 1 0 %d 1000 %d 0 0 0 0 0 0 0 0 0 0 0 0 0 17 0 0 0 0 0 0\n",
+		k.pid, k.comm, k.ppid, k.pid, k.pid, flags, k.ticks, k.cticks, k.start, k.rssPages))
 	f.write(dir+"/statm", fmt.Sprintf("100 %d 0 0 0 0 0\n", k.rssPages))
 	f.write(dir+"/cmdline", k.cmdline)
 	if !k.noIO {
@@ -206,6 +207,47 @@ func TestPIDReuseIsNotCharged(t *testing.T) {
 	s, _ = c.Sample()
 	if a := s.App("new"); a == nil || !near(a.CPU, 50) || !near(a.DiskWrite, 1000) {
 		t.Errorf("second interval = %+v", a)
+	}
+}
+
+// A build script spawns short-lived compilers. One is seen once and then
+// exits; another starts and exits between samples. Both end up in the
+// parent's cutime and io once reaped. The seen child's earlier work must not
+// be counted twice, and the unseen child's work must not be lost.
+func TestReapedChildrenAreCountedOnce(t *testing.T) {
+	fp := newFakeProc(t)
+	clk := &clock{time.Unix(1700001000, 0)}
+	fp.system(0, 1000, 500, 0, 0, 0, 0)
+	fp.task(fakeTask{pid: 1, comm: "systemd", cmdline: "systemd\x00", start: 1})
+	fp.task(fakeTask{pid: 50, ppid: 1, comm: "make", cmdline: "make\x00", ticks: 10, start: 100, written: 1000})
+	c, err := New(Options{Proc: procfs.New(fp.root), Now: clk.now})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// cc (pid 51) appears with 30 ticks and 5000 bytes written.
+	clk.t = clk.t.Add(time.Second)
+	fp.system(30, 1070, 501, 0, 0, 0, 0)
+	fp.task(fakeTask{pid: 51, ppid: 50, comm: "cc", cmdline: "cc\x00", ticks: 30, start: 50050, written: 5000})
+	if _, err := c.Sample(); err != nil {
+		t.Fatal(err)
+	}
+
+	// cc ran 20 more ticks and wrote 2000 more bytes, then exited; a second
+	// compiler ran 40 ticks and wrote 3000 bytes entirely between samples.
+	// make itself used 5 ticks. make's cutime and io now include both children.
+	clk.t = clk.t.Add(time.Second)
+	fp.system(95, 1105, 502, 0, 0, 0, 0)
+	fp.remove(51)
+	fp.task(fakeTask{pid: 50, ppid: 1, comm: "make", cmdline: "make\x00", ticks: 15, cticks: 50 + 40, start: 100,
+		written: 1000 + 7000 + 3000})
+	s, err := c.Sample()
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := s.App("make")
+	if a == nil || !near(a.CPU, 65) || !near(a.DiskWrite, 5000) {
+		t.Errorf("make = %+v, want cpu 65 (5 own + 20 seen child + 40 unseen) and 5000 B/s written", a)
 	}
 }
 

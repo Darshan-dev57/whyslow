@@ -54,7 +54,8 @@ type procState struct {
 	cmdline   []string
 	ppid      int
 	kernel    bool
-	ticks     uint64
+	ticks     uint64 // own CPU time
+	cticks    uint64 // CPU time of reaped children
 	io        procfs.IO
 	ioOK      bool
 	sockets   int
@@ -199,6 +200,17 @@ func (c *Collector) sample() (*model.Snapshot, error) {
 	return snap, nil
 }
 
+// reading is one process's counters at this sample.
+type reading struct {
+	st     procfs.ProcStat
+	ps     *procState
+	fresh  bool // first time this PID+start is seen
+	born   bool // started after the previous sample
+	io     procfs.IO
+	ioOK   bool
+	cticks uint64
+}
+
 func (c *Collector) sampleProcs(now time.Time, up, secs float64, first bool) (map[string]*appAcc, error) {
 	pids, err := c.opts.Proc.PIDs()
 	if err != nil {
@@ -210,12 +222,7 @@ func (c *Collector) sampleProcs(now time.Time, up, secs float64, first bool) (ma
 	bornAfter := uint64(c.prevUp*procfs.UserHZ) - procfs.UserHZ/10
 	countSockets := c.opts.SocketEvery > 0 && (c.n-1)%uint64(c.opts.SocketEvery) == 0
 
-	type delta struct {
-		ticks       uint64
-		read, wrote uint64
-	}
-	deltas := make(map[int]delta, len(pids))
-	tree := make(map[int]*apps.Proc, len(pids))
+	reads := make(map[int]*reading, len(pids))
 	for _, pid := range pids {
 		st, err := c.opts.Proc.ProcStat(pid)
 		if err != nil {
@@ -228,44 +235,73 @@ func (c *Collector) sampleProcs(now time.Time, up, secs float64, first bool) (ma
 			ps.startedAt = now.Add(-time.Duration((up - float64(st.StartTime)/procfs.UserHZ) * float64(time.Second)))
 			c.procs[pid] = ps
 		}
-		bornNow := fresh && !first && st.StartTime >= bornAfter
+		r := &reading{st: st, ps: ps, fresh: fresh, born: fresh && !first && st.StartTime >= bornAfter}
 		// exec changes comm but keeps the PID, so re-read the command line then.
 		if fresh || ps.comm != st.Comm {
 			ps.cmdline, _ = c.opts.Proc.Cmdline(pid)
 			ps.comm = st.Comm
 		}
-		ps.ppid, ps.kernel, ps.seen = st.PPID, st.IsKernelThread(), c.n
-
-		var d delta
-		ticks := st.CPUTicks()
-		switch {
-		case bornNow:
-			d.ticks = ticks
-		case !fresh && ticks >= ps.ticks:
-			d.ticks = ticks - ps.ticks
-		}
-		ps.ticks = ticks
-
+		ps.kernel, ps.seen = st.IsKernelThread(), c.n
 		if !ps.kernel {
-			io, err := c.opts.Proc.IO(pid)
-			switch {
-			case err == nil:
-				switch {
-				case bornNow:
-					d.read, d.wrote = io.ReadBytes, io.WriteBytes
-				case !fresh && ps.ioOK && io.ReadBytes >= ps.io.ReadBytes && io.WriteBytes >= ps.io.WriteBytes:
-					d.read, d.wrote = io.ReadBytes-ps.io.ReadBytes, io.WriteBytes-ps.io.WriteBytes
-				}
-				ps.io, ps.ioOK = io, true
-			default:
-				ps.ioOK = false
-			}
+			r.io, err = c.opts.Proc.IO(pid)
+			r.ioOK = err == nil
 			if countSockets {
 				if n, err := c.opts.Proc.SocketCount(pid); err == nil {
 					ps.sockets = n
 				}
 			}
 		}
+		reads[pid] = r
+	}
+
+	// When a parent waits for an exited child, the kernel adds the child's
+	// CPU time to the parent's cutime/cstime and the child's I/O to the
+	// parent's /proc/[pid]/io. Children that lived and died between two
+	// samples are only visible that way. To avoid counting children we did
+	// see twice, their last-seen totals are credited back to the parent.
+	type credit struct{ ticks, read, wrote uint64 }
+	credits := map[int]credit{}
+	for pid, ps := range c.procs {
+		if ps.seen == c.n {
+			continue
+		}
+		cr := credits[ps.ppid]
+		cr.ticks += ps.ticks + ps.cticks
+		if ps.ioOK {
+			cr.read += ps.io.ReadBytes
+			cr.wrote += ps.io.WriteBytes
+		}
+		credits[ps.ppid] = cr
+		delete(c.procs, pid)
+	}
+
+	type delta struct{ ticks, read, wrote uint64 }
+	deltas := make(map[int]delta, len(reads))
+	tree := make(map[int]*apps.Proc, len(reads))
+	for pid, r := range reads {
+		ps, st := r.ps, r.st
+		cr := credits[pid]
+		var d delta
+		ticks, cticks := st.CPUTicks(), st.ChildTicks()
+		switch {
+		case r.born:
+			d.ticks = ticks + cticks
+		case !r.fresh:
+			d.ticks = sub(ticks, ps.ticks) + sub(sub(cticks, ps.cticks), cr.ticks)
+		}
+		ps.ticks, ps.cticks = ticks, cticks
+		if r.ioOK {
+			switch {
+			case r.born:
+				d.read, d.wrote = r.io.ReadBytes, r.io.WriteBytes
+			case !r.fresh && ps.ioOK:
+				d.read = sub(sub(r.io.ReadBytes, ps.io.ReadBytes), cr.read)
+				d.wrote = sub(sub(r.io.WriteBytes, ps.io.WriteBytes), cr.wrote)
+			}
+			ps.io = r.io
+		}
+		ps.ioOK = r.ioOK
+		ps.ppid = st.PPID
 		deltas[pid] = d
 		tree[pid] = &apps.Proc{PID: pid, PPID: st.PPID, Comm: st.Comm, Cmdline: ps.cmdline, Kernel: ps.kernel}
 	}
@@ -302,7 +338,7 @@ func (c *Collector) sampleProcs(now time.Time, up, secs float64, first bool) (ma
 	}
 
 	if c.opts.Net != nil {
-		c.addNet(accs, get, secs)
+		c.addNet(get, secs)
 	}
 
 	for _, a := range accs {
@@ -314,20 +350,21 @@ func (c *Collector) sampleProcs(now time.Time, up, secs float64, first bool) (ma
 			a.CPU, a.DiskRead, a.DiskWrite = 0, 0, 0
 		}
 	}
-
-	// Forget processes that are gone.
-	for pid, ps := range c.procs {
-		if ps.seen != c.n {
-			delete(c.procs, pid)
-		}
-	}
 	return accs, nil
+}
+
+// sub is a - b, floored at zero: counters that went backwards mean nothing.
+func sub(a, b uint64) uint64 {
+	if a < b {
+		return 0
+	}
+	return a - b
 }
 
 // addNet charges per-process network deltas to apps. Counters of processes
 // that already exited are charged to the app they belonged to when last
 // seen, or named from the comm the kernel recorded with the bytes.
-func (c *Collector) addNet(accs map[string]*appAcc, get func(string) *appAcc, secs float64) {
+func (c *Collector) addNet(get func(string) *appAcc, secs float64) {
 	counters, err := c.opts.Net.Counters()
 	if err != nil {
 		return
