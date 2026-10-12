@@ -74,9 +74,13 @@ func Exe(p *Proc) string {
 	}
 	arg0 := p.Cmdline[0]
 	// Programs that rewrite their title often pack everything into argv[0].
+	// A title made only of spaces has no first field; fall back to comm.
 	if len(p.Cmdline) == 1 && strings.ContainsAny(arg0, " :") {
-		arg0 = strings.Fields(arg0)[0]
-		arg0 = strings.TrimSuffix(arg0, ":")
+		f := strings.Fields(arg0)
+		if len(f) == 0 {
+			return p.Comm
+		}
+		arg0 = strings.TrimSuffix(f[0], ":")
 	}
 	base := strings.TrimPrefix(path.Base(arg0), "-") // "-bash" is a login shell
 	if base == "." || base == "/" || base == "" {
