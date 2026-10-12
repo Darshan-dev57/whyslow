@@ -202,13 +202,12 @@ func (c *Collector) sample() (*model.Snapshot, error) {
 
 // reading is one process's counters at this sample.
 type reading struct {
-	st     procfs.ProcStat
-	ps     *procState
-	fresh  bool // first time this PID+start is seen
-	born   bool // started after the previous sample
-	io     procfs.IO
-	ioOK   bool
-	cticks uint64
+	st    procfs.ProcStat
+	ps    *procState
+	fresh bool // first time this PID+start is seen
+	born  bool // started after the previous sample
+	io    procfs.IO
+	ioOK  bool
 }
 
 func (c *Collector) sampleProcs(now time.Time, up, secs float64, first bool) (map[string]*appAcc, error) {
