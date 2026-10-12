@@ -211,8 +211,11 @@ func printChecks(w io.Writer, cs []check) (failed bool) {
 
 func cmdDoctor(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("doctor", flag.ExitOnError)
+	dbPath := fs.String("db", defaultDBPath(), "SQLite database path to check")
 	fs.Parse(args)
-	if printChecks(os.Stdout, runChecks(hostDoctorEnv())) {
+	env := hostDoctorEnv()
+	env.dbPath = *dbPath
+	if printChecks(os.Stdout, runChecks(env)) {
 		return errors.New("some checks failed")
 	}
 	return nil
