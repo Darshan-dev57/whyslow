@@ -97,3 +97,24 @@ func TestSelfParentDoesNotLoop(t *testing.T) {
 		t.Errorf("got %q", got[7])
 	}
 }
+
+func TestIsWrapper(t *testing.T) {
+	cases := []struct {
+		argv []string
+		want bool
+	}{
+		{[]string{"bash", "-c", "while :; do dd; done"}, true},
+		{[]string{"-bash"}, true},
+		{[]string{"xargs", "-n1", "gzip"}, true},
+		{[]string{"timeout", "20", "make"}, true},
+		{[]string{"bash", "build.sh"}, false}, // a script is an app of its own
+		{[]string{"/sbin/init"}, false},       // adopts unrelated orphans
+		{[]string{"sshd: user@pts/0"}, false},
+		{[]string{"make", "-j4"}, false},
+	}
+	for _, c := range cases {
+		if got := IsWrapper(&Proc{Cmdline: c.argv}); got != c.want {
+			t.Errorf("IsWrapper(%q) = %v", c.argv, got)
+		}
+	}
+}

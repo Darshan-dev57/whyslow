@@ -101,6 +101,24 @@ func IsLauncher(p *Proc) bool {
 	return false
 }
 
+// wrappers run other commands and do almost no work of their own.
+var wrappers = map[string]bool{
+	"timeout": true, "env": true, "nice": true, "ionice": true, "nohup": true, "setsid": true,
+	"stdbuf": true, "xargs": true, "time": true, "strace": true, "watch": true, "parallel": true,
+}
+
+// IsWrapper reports whether p is a launcher that runs commands one after
+// another and does little itself: a shell running inline code or reading
+// commands, xargs, timeout and the like. Sessions that adopt unrelated
+// processes (init, sshd, terminals) are launchers but not wrappers.
+func IsWrapper(p *Proc) bool {
+	exe := Exe(p)
+	if shells[exe] {
+		return scriptArg(p.Cmdline) == ""
+	}
+	return wrappers[exe]
+}
+
 // OwnName is the app name a process would have if it stood alone.
 func OwnName(p *Proc) string {
 	if p.Kernel {

@@ -63,6 +63,15 @@ type procState struct {
 	startedAt time.Time
 }
 
+// kidMemory is how many samples a wrapper's last seen child is remembered.
+const kidMemory = 3
+
+// kidSeen is the app of a wrapper's child and the sample that saw it.
+type kidSeen struct {
+	name string
+	n    uint64
+}
+
 // Collector samples the machine. It is not safe for concurrent use; one
 // goroutine owns it.
 type Collector struct {
@@ -80,6 +89,7 @@ type Collector struct {
 	procs      map[int]*procState
 	prevAppNet map[uint32]NetCounter
 	appOf      map[uint32]string // last app name of each PID, for counters of exited processes
+	lastKid    map[int]kidSeen   // last child app seen under each wrapper
 }
 
 // New creates a collector and takes the first reading, so the first call to
@@ -100,6 +110,7 @@ func New(opts Options) (*Collector, error) {
 		procs:      make(map[int]*procState),
 		prevAppNet: make(map[uint32]NetCounter),
 		appOf:      make(map[uint32]string),
+		lastKid:    make(map[int]kidSeen),
 	}
 	if blocks, err := opts.Sys.BlockDevices(); err == nil {
 		c.wholeDisks = blocks
@@ -263,7 +274,9 @@ func (c *Collector) sampleProcs(now time.Time, up, secs float64, first bool) (ma
 	// last-seen totals plus those of its dead children.
 	credits := c.reapCredits()
 
-	type delta struct{ ticks, read, wrote uint64 }
+	// kticks is CPU time of children that lived and died unseen; for a
+	// wrapper it is charged to the app of its last seen child (below).
+	type delta struct{ ticks, kticks, read, wrote uint64 }
 	deltas := make(map[int]delta, len(reads))
 	tree := make(map[int]*apps.Proc, len(reads))
 	for pid, r := range reads {
@@ -275,7 +288,8 @@ func (c *Collector) sampleProcs(now time.Time, up, secs float64, first bool) (ma
 		case r.born:
 			d.ticks = ticks + cticks
 		case !r.fresh:
-			d.ticks = sub(ticks, ps.ticks) + sub(sub(cticks, ps.cticks), cr.ticks)
+			d.ticks = sub(ticks, ps.ticks)
+			d.kticks = sub(sub(cticks, ps.cticks), cr.ticks)
 		}
 		ps.ticks, ps.cticks = ticks, cticks
 		if r.ioOK {
@@ -310,8 +324,18 @@ func (c *Collector) sampleProcs(now time.Time, up, secs float64, first bool) (ma
 		a := get(name)
 		a.Procs++
 		a.ticks += d.ticks
-		a.DiskRead += float64(d.read)
-		a.DiskWrite += float64(d.wrote)
+		// A wrapper (a shell loop, xargs) whose children are too short-lived
+		// to be sampled only shows their work as a jump in its own counters.
+		// That work belongs to what it runs, so it goes to the app of the
+		// child it was last seen running, if that was within a few samples.
+		// Its own I/O is negligible, so its I/O jump goes along.
+		to := a
+		if k, ok := c.lastKid[pid]; ok && c.n-k.n <= kidMemory && apps.IsWrapper(tree[pid]) {
+			to = get(k.name)
+		}
+		to.ticks += d.kticks
+		to.DiskRead += float64(d.read)
+		to.DiskWrite += float64(d.wrote)
 		a.Sockets += ps.sockets
 		if !ps.ioOK && !ps.kernel {
 			a.IOHidden++
@@ -323,6 +347,12 @@ func (c *Collector) sampleProcs(now time.Time, up, secs float64, first bool) (ma
 			a.Started = ps.startedAt
 		}
 		c.appOf[uint32(pid)] = name
+	}
+
+	for pid, name := range names {
+		if p := tree[tree[pid].PPID]; p != nil && name != names[p.PID] && apps.IsWrapper(p) {
+			c.lastKid[p.PID] = kidSeen{name: name, n: c.n}
+		}
 	}
 
 	if c.opts.Net != nil {
@@ -358,6 +388,7 @@ func (c *Collector) reapCredits() map[int]credit {
 		if ps.seen != c.n {
 			dead[pid] = ps
 			delete(c.procs, pid)
+			delete(c.lastKid, pid)
 		}
 	}
 	kids := map[int][]int{}

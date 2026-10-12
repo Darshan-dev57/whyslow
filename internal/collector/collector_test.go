@@ -375,3 +375,40 @@ func TestSampleOnHost(t *testing.T) {
 		t.Errorf("host sample looks empty: %d apps, mem %d, ncpu %d", len(s.Apps), s.Sys.MemTotal, s.Sys.NumCPU)
 	}
 }
+
+// A shell loop (bash -c 'while :; do dd ...; done') runs a dd that exits
+// within a second. Most dd runs are never sampled and only show up as a
+// jump in the shell's cutime and io when it reaps them. That work is dd's,
+// not bash's: it goes to the app of the child the loop was last seen running.
+func TestWrapperLoopChargesItsChild(t *testing.T) {
+	fp := newFakeProc(t)
+	clk := &clock{time.Unix(1700001000, 0)}
+	loop := "bash\x00-c\x00while :; do dd if=/dev/zero of=f; done\x00"
+	fp.system(0, 1000, 500, 0, 0, 0, 0)
+	fp.task(fakeTask{pid: 1, comm: "systemd", cmdline: "systemd\x00", start: 1})
+	fp.task(fakeTask{pid: 10, ppid: 1, comm: "bash", cmdline: loop, start: 100})
+	fp.task(fakeTask{pid: 11, ppid: 10, comm: "dd", cmdline: "dd\x00if=/dev/zero\x00", start: 49990, ticks: 10, written: 1e6})
+	c, err := New(Options{Proc: procfs.New(fp.root), Now: clk.now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// One second later: dd 11 wrote 50 MB more and exited, dd 12 lived and
+	// died unseen (100 MB, 40 ticks), dd 13 is running. The shell reaped
+	// both, so its counters hold everything 11 and 12 ever did.
+	clk.t = clk.t.Add(time.Second)
+	fp.system(100, 1000, 501, 0, 0, 0, 0)
+	fp.remove(11)
+	fp.task(fakeTask{pid: 10, ppid: 1, comm: "bash", cmdline: loop, start: 100, cticks: 30 + 40, written: 51e6 + 100e6})
+	fp.task(fakeTask{pid: 13, ppid: 10, comm: "dd", cmdline: "dd\x00if=/dev/zero\x00", start: 50050, ticks: 5, written: 5e6})
+	s, err := c.Sample()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dd, sh := s.App("dd"), s.App("bash")
+	if dd == nil || !near(dd.DiskWrite, 155e6) || !near(dd.CPU, 65) {
+		t.Errorf("dd = %+v", dd)
+	}
+	if sh != nil && (sh.DiskWrite != 0 || sh.CPU != 0) {
+		t.Errorf("the loop itself was charged: %+v", sh)
+	}
+}
