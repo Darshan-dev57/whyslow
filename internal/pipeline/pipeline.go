@@ -10,6 +10,7 @@ package pipeline
 import (
 	"context"
 	"log/slog"
+	"runtime/debug"
 	"time"
 
 	"github.com/Darshan-dev57/whyslow/internal/blame"
@@ -142,6 +143,23 @@ func (p *Pipeline) explain(sp detect.Spike) *model.Mystery {
 	}, snaps, p.netPerApp, p.cfg.Blame)
 }
 
+// tick takes and processes one sample. A panic is recovered and returned
+// with its stack.
+func (p *Pipeline) tick(src Sampler) (recovered any, stack string) {
+	defer func() {
+		if v := recover(); v != nil {
+			recovered, stack = v, string(debug.Stack())
+		}
+	}()
+	s, err := src.Sample()
+	if err != nil {
+		p.log.Warn("sample failed", "err", err)
+		return nil, ""
+	}
+	p.Process(s)
+	return nil, ""
+}
+
 // Run samples every interval until ctx is cancelled. Ticks are aligned to
 // the middle of a wall-clock second so that one-second samples never share
 // a timestamp in the database.
@@ -155,12 +173,17 @@ func (p *Pipeline) Run(ctx context.Context, src Sampler, interval time.Duration)
 	}
 	t := time.NewTicker(interval)
 	defer t.Stop()
+	panics := 0
 	for {
-		s, err := src.Sample()
-		if err != nil {
-			p.log.Warn("sample failed", "err", err)
-		} else {
-			p.Process(s)
+		if v, stack := p.tick(src); v != nil {
+			// One bad tick (a parser surprised by something in /proc) must
+			// not take the whole daemon down. The stack is logged once.
+			panics++
+			if panics == 1 {
+				p.log.Error("sampling tick panicked; skipping it", "panic", v, "stack", stack)
+			} else {
+				p.log.Error("sampling tick panicked; skipping it", "panic", v, "count", panics)
+			}
 		}
 		select {
 		case <-ctx.Done():

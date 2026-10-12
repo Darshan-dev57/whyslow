@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -143,5 +144,43 @@ func TestStoreSink(t *testing.T) {
 	ms, _ := st.Mysteries(context.Background(), t0, t0.Add(time.Hour), 10)
 	if len(ms) != 1 || ms[0].Culprits[0].App != "dd" {
 		t.Errorf("stored mysteries = %+v", ms)
+	}
+}
+
+// panicky panics on its first sample, then replays snaps and cancels.
+type panicky struct {
+	snaps  []*model.Snapshot
+	calls  int
+	cancel context.CancelFunc
+}
+
+func (s *panicky) NetPerApp() bool { return false }
+
+func (s *panicky) Sample() (*model.Snapshot, error) {
+	s.calls++
+	if s.calls == 1 {
+		var argv []string
+		_ = argv[0] // the shape of the whitespace-title crash
+	}
+	if len(s.snaps) == 0 {
+		s.cancel()
+		return nil, errors.New("done")
+	}
+	x := s.snaps[0]
+	s.snaps = s.snaps[1:]
+	return x, nil
+}
+
+func TestRunSurvivesPanickingTick(t *testing.T) {
+	rec := &recorder{}
+	p := New(DefaultConfig(), false, rec)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	src := &panicky{snaps: diskSpike()[:5], cancel: cancel}
+	if err := p.Run(ctx, src, time.Millisecond); err != nil {
+		t.Fatal(err)
+	}
+	if len(rec.frames) != 5 {
+		t.Errorf("frames after a panicking tick = %d, want 5", len(rec.frames))
 	}
 }
