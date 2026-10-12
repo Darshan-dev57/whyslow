@@ -412,3 +412,39 @@ func TestWrapperLoopChargesItsChild(t *testing.T) {
 		t.Errorf("the loop itself was charged: %+v", sh)
 	}
 }
+
+// timeout kills a multiprocessing parent; its two busy children are
+// reparented to init, finish and are reaped by init, whose cutime jumps by
+// their whole lifetime. The credit for what was already charged to them went
+// to timeout (the dead parent's parent). Measured before the fix: init got
+// 300 s of CPU in one second.
+func TestOrphansReapedByInitAreNotChargedTwice(t *testing.T) {
+	fp := newFakeProc(t)
+	clk := &clock{time.Unix(1700001000, 0)}
+	fp.system(0, 1000, 500, 0, 0, 0, 0)
+	fp.task(fakeTask{pid: 1, comm: "systemd", cmdline: "/sbin/init\x00", start: 1})
+	fp.task(fakeTask{pid: 20, ppid: 1, comm: "timeout", cmdline: "timeout\x0060\x00python3\x00work.py\x00", start: 100})
+	fp.task(fakeTask{pid: 21, ppid: 20, comm: "python3", cmdline: "python3\x00work.py\x00", start: 101, ticks: 10})
+	fp.task(fakeTask{pid: 22, ppid: 21, comm: "python3", cmdline: "python3\x00work.py\x00", start: 102, ticks: 10000, written: 4e9})
+	fp.task(fakeTask{pid: 23, ppid: 21, comm: "python3", cmdline: "python3\x00work.py\x00", start: 102, ticks: 10000})
+	c, err := New(Options{Proc: procfs.New(fp.root), Now: clk.now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	clk.t = clk.t.Add(time.Second)
+	fp.system(200, 1000, 501, 0, 0, 0, 0)
+	for _, pid := range []int{21, 22, 23} {
+		fp.remove(pid)
+	}
+	// timeout reaped only the parent; init reaped the two orphans, which ran
+	// 100 more ticks each and wrote 1 MB more since the last sample.
+	fp.task(fakeTask{pid: 20, ppid: 1, comm: "timeout", cmdline: "timeout\x0060\x00python3\x00work.py\x00", start: 100, cticks: 10})
+	fp.task(fakeTask{pid: 1, comm: "systemd", cmdline: "/sbin/init\x00", start: 1, cticks: 2 * 10100, written: 4e9 + 1e6})
+	s, err := c.Sample()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a := s.App("init"); a == nil || a.CPU > 200.5 || a.DiskWrite > 1e6+1 {
+		t.Errorf("init charged for the orphans' whole lives: cpu %.0f%%, write %.0f", a.CPU, a.DiskWrite)
+	}
+}

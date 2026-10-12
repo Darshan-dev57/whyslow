@@ -274,15 +274,54 @@ func (c *Collector) sampleProcs(now time.Time, up, secs float64, first bool) (ma
 	// last-seen totals plus those of its dead children.
 	credits := c.reapCredits()
 
+	// A credit can land on the wrong process: when a parent dies first, its
+	// children are reparented to init (or a subreaper), which reaps them and
+	// shows their whole lifetime as one jump in its cutime, while the credit
+	// went to the parent's parent. Measured: init charged 300 s of CPU in one
+	// second after timeout killed a multiprocessing parent. Credits that find
+	// no matching jump go to a pool, and processes with a jump no credit
+	// explains (the reaper) draw from it.
+	order := make([]int, 0, len(reads))
+	for pid := range reads {
+		order = append(order, pid)
+	}
+	sort.Ints(order)
+	var pool credit
+	for pid, cr := range credits {
+		r, ok := reads[pid]
+		if !ok || r.fresh {
+			pool.add(cr)
+			continue
+		}
+		if j := sub(r.st.ChildTicks(), r.ps.cticks); cr.ticks > j {
+			pool.ticks += cr.ticks - j
+		}
+		if r.ioOK && r.ps.ioOK {
+			if j := sub(r.io.ReadBytes, r.ps.io.ReadBytes); cr.read > j {
+				pool.read += cr.read - j
+			}
+			if j := sub(r.io.WriteBytes, r.ps.io.WriteBytes); cr.wrote > j {
+				pool.wrote += cr.wrote - j
+			}
+		}
+	}
+	draw := func(v uint64, from *uint64) uint64 {
+		n := min(v, *from)
+		*from -= n
+		return v - n
+	}
+
 	// kticks is CPU time of children that lived and died unseen; for a
 	// wrapper it is charged to the app of its last seen child (below).
 	type delta struct{ ticks, kticks, read, wrote uint64 }
 	deltas := make(map[int]delta, len(reads))
 	tree := make(map[int]*apps.Proc, len(reads))
-	for pid, r := range reads {
+	for _, pid := range order {
+		r := reads[pid]
 		ps, st := r.ps, r.st
 		cr := credits[pid]
 		var d delta
+		reaper := false
 		ticks, cticks := st.CPUTicks(), st.ChildTicks()
 		switch {
 		case r.born:
@@ -290,6 +329,10 @@ func (c *Collector) sampleProcs(now time.Time, up, secs float64, first bool) (ma
 		case !r.fresh:
 			d.ticks = sub(ticks, ps.ticks)
 			d.kticks = sub(sub(cticks, ps.cticks), cr.ticks)
+			if d.kticks > 0 && pool.ticks > 0 {
+				d.kticks = draw(d.kticks, &pool.ticks)
+				reaper = true
+			}
 		}
 		ps.ticks, ps.cticks = ticks, cticks
 		if r.ioOK {
@@ -299,6 +342,12 @@ func (c *Collector) sampleProcs(now time.Time, up, secs float64, first bool) (ma
 			case !r.fresh && ps.ioOK:
 				d.read = sub(sub(r.io.ReadBytes, ps.io.ReadBytes), cr.read)
 				d.wrote = sub(sub(r.io.WriteBytes, ps.io.WriteBytes), cr.wrote)
+				// Only a process that reaped unexpected children has its
+				// I/O reduced; I/O of its own is indistinguishable here.
+				if reaper {
+					d.read = draw(d.read, &pool.read)
+					d.wrote = draw(d.wrote, &pool.wrote)
+				}
 			}
 			ps.io = r.io
 		}
