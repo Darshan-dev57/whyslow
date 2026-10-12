@@ -4,6 +4,7 @@ import (
 	"log/slog"
 
 	"github.com/Darshan-dev57/whyslow/internal/collector"
+	"github.com/Darshan-dev57/whyslow/internal/web"
 )
 
 type netSource interface {
@@ -11,8 +12,8 @@ type netSource interface {
 	Close() error
 }
 
-// openNet returns the per-app network source and a short description of
-// the network mode for the UI and logs.
-func openNet(useEBPF bool, log *slog.Logger) (netSource, string) {
-	return nil, "proc"
+// openNet returns the per-app network source and where network numbers
+// come from, for the UI and logs.
+func openNet(useEBPF bool, log *slog.Logger) (netSource, web.NetStatus) {
+	return nil, web.NetStatus{Mode: "proc", Reason: "eBPF not enabled"}
 }

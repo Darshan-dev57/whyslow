@@ -20,7 +20,8 @@ func cmdTop(ctx context.Context, args []string) error {
 	useEBPF := fs.Bool("ebpf", false, "per-app network via eBPF (needs root)")
 	fs.Parse(args)
 
-	net, mode := openNet(*useEBPF, nil)
+	net, ns := openNet(*useEBPF, nil)
+	mode := ns.Mode
 	if net != nil {
 		defer net.Close()
 	}
