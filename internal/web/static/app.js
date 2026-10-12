@@ -72,7 +72,9 @@ async function loadStatus() {
     if (st.net.mode === "ebpf") {
       pill.textContent = "per-app network: eBPF";
       pill.className = "pill on";
-      pill.title = "Network bytes are counted per process in the kernel";
+      pill.title = st.net.method === "socket-owner"
+        ? "Counting IP packets per socket owner (this kernel cannot run fentry/fexit). Sockets opened before whyslow started are not counted."
+        : "Counting bytes at the kernel's TCP/UDP send and receive functions";
     } else {
       pill.textContent = "per-app network: off";
       pill.className = "pill off";

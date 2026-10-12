@@ -27,7 +27,11 @@ func cmdRun(ctx context.Context, args []string) error {
 		return fmt.Errorf("--interval must be at least 100ms")
 	}
 
-	ln, err := net.Listen("tcp", *addr)
+	// Plain TCP, not Go's default MPTCP: MPTCP subflows are kernel sockets
+	// that the socket-owner eBPF method cannot attribute to whyslow.
+	var lc net.ListenConfig
+	lc.SetMultipathTCP(false)
+	ln, err := lc.Listen(ctx, "tcp", *addr)
 	if err != nil {
 		return fmt.Errorf("web UI: %w", err)
 	}

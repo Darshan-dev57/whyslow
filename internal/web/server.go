@@ -31,7 +31,8 @@ var staticFiles embed.FS
 // NetStatus says where per-app network numbers come from.
 type NetStatus struct {
 	Mode   string `json:"mode"`             // "ebpf" or "proc"
-	Reason string `json:"reason,omitempty"` // why eBPF is off, when it is
+	Method string `json:"method,omitempty"` // eBPF counting method: "fentry" or "socket-owner"
+	Reason string `json:"reason,omitempty"` // why eBPF is off, or why the fallback method is used
 }
 
 // Options configures a Server.
