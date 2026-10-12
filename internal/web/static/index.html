@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>whyslow</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="vendor/uPlot.min.css">
+<link rel="stylesheet" href="style.css">
+<script src="vendor/uPlot.iife.min.js" defer></script>
+<script src="app.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="#/live"><span class="mark" aria-hidden="true">?</span>whyslow</a>
+  <nav>
+    <a href="#/live" data-nav="live">Live</a>
+    <a href="#/mysteries" data-nav="mysteries">Mysteries</a>
+    <a href="#/report" data-nav="report">Report</a>
+  </nav>
+  <div class="pills">
+    <span id="conn" class="pill off" title="Live connection">connecting</span>
+    <span id="netmode" class="pill" title="Where per-app network numbers come from">network: ?</span>
+  </div>
+</header>
+<main id="view" aria-live="polite"></main>
+<div id="toast" class="toast" hidden></div>
+<noscript><p class="empty">whyslow's dashboard needs JavaScript. The CLI works without it: whyslow mysteries, whyslow report.</p></noscript>
+</body>
+</html>
