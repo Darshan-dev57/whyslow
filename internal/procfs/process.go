@@ -24,12 +24,17 @@ type ProcStat struct {
 	Flags      uint64
 	UTime      uint64 // clock ticks
 	STime      uint64 // clock ticks
+	CUTime     uint64 // user time of reaped children, clock ticks
+	CSTime     uint64 // system time of reaped children, clock ticks
 	NumThreads int
 	StartTime  uint64 // clock ticks since boot
 }
 
 // CPUTicks is user plus system time.
 func (p ProcStat) CPUTicks() uint64 { return p.UTime + p.STime }
+
+// ChildTicks is the CPU time of children this process has waited for.
+func (p ProcStat) ChildTicks() uint64 { return p.CUTime + p.CSTime }
 
 // IsKernelThread reports whether the task is a kernel thread.
 func (p ProcStat) IsKernelThread() bool { return p.Flags&pfKthread != 0 }
@@ -71,6 +76,17 @@ func ParseProcStat(b []byte) (ProcStat, error) {
 		n   int
 		dst *uint64
 	}{{9, &p.Flags}, {14, &p.UTime}, {15, &p.STime}, {22, &p.StartTime}}
+	for _, x := range []struct {
+		n   int
+		dst *uint64
+	}{{16, &p.CUTime}, {17, &p.CSTime}} {
+		// cutime and cstime are signed in the kernel (long); never negative in practice.
+		v, err := strconv.ParseInt(field(x.n), 10, 64)
+		if err != nil {
+			return ProcStat{}, fmt.Errorf("procfs: stat field %d: %w", x.n, err)
+		}
+		*x.dst = uint64(max(v, 0))
+	}
 	for _, x := range nums {
 		v, err := strconv.ParseUint(field(x.n), 10, 64)
 		if err != nil {

@@ -139,6 +139,13 @@ func TestParseProcStat(t *testing.T) {
 	}
 }
 
+func TestChildTicks(t *testing.T) {
+	p, err := fixture.ProcStat(4321)
+	if err != nil || p.ChildTicks() != 150 {
+		t.Errorf("ChildTicks = %d, %v; want 150", p.ChildTicks(), err)
+	}
+}
+
 func TestParseProcStatErrors(t *testing.T) {
 	for _, in := range []string{"", "12 no comm here", "x (a) S 1", "5 (a) S 1 2 3"} {
 		if _, err := ParseProcStat([]byte(in)); err == nil {
