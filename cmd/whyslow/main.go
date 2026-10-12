@@ -51,6 +51,8 @@ func main() {
 		err = cmdMysteries(ctx, args)
 	case "report":
 		err = cmdReport(ctx, args)
+	case "doctor":
+		err = cmdDoctor(ctx, args)
 	case "version", "--version":
 		fmt.Println("whyslow", version)
 	case "help", "-h", "--help":
