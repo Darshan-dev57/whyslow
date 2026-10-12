@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -140,20 +141,26 @@ func (fs FS) IO(pid int) (IO, error) {
 		return IO{}, err
 	}
 	defer f.Close()
+	return ParseIO(f)
+}
+
+// ParseIO parses the format of /proc/[pid]/io.
+func ParseIO(r io.Reader) (IO, error) {
 	var out IO
-	var seen int
-	sc := bufio.NewScanner(f)
+	var seen uint8 // bit 0: read_bytes, bit 1: write_bytes
+	sc := bufio.NewScanner(r)
 	for sc.Scan() {
 		k, v, ok := strings.Cut(sc.Text(), ":")
 		if !ok {
 			continue
 		}
 		var dst *uint64
+		var bit uint8
 		switch k {
 		case "read_bytes":
-			dst = &out.ReadBytes
+			dst, bit = &out.ReadBytes, 1
 		case "write_bytes":
-			dst = &out.WriteBytes
+			dst, bit = &out.WriteBytes, 2
 		default:
 			continue
 		}
@@ -162,12 +169,12 @@ func (fs FS) IO(pid int) (IO, error) {
 			return IO{}, fmt.Errorf("procfs: io %s: %w", k, err)
 		}
 		*dst = n
-		seen++
+		seen |= bit
 	}
 	if err := sc.Err(); err != nil {
 		return IO{}, err
 	}
-	if seen < 2 {
+	if seen != 3 {
 		return IO{}, errors.New("procfs: io lacks read_bytes or write_bytes")
 	}
 	return out, nil

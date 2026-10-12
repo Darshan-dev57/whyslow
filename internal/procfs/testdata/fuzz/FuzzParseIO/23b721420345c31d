@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("read_bytes:0\nread_bytes:0")
