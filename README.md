@@ -169,7 +169,7 @@ An overnight pass on the development VM (4 vCPU, 8 GB, kernel 6.1, no BPF JIT) t
 | Race detector, all packages + integration + root eBPF test | pass, no races |
 | Fuzzing, 10 targets (9 `/proc` parsers + app grouping), 300 s each | 1 bug: `/proc/[pid]/io` with a key repeated parsed as valid; fixed, input kept as a regression case |
 | Process churn: ~1,100 spawns/s for 120 s, names like `a) b (`, newlines, unicode, 26 chars, 300 zombies | no tick lag (max gap 1 s); 1 crash found: a process whose command line is a single space killed whyslow, root daemon included; fixed, and a panicking tick is now skipped instead of fatal |
-| Blame accuracy: 8 scenarios with a known culprit plus a decoy (CPU, memory, disk read/write, download, upload, shell loops of short-lived `dd`) | 42 trials: 40 detected; the right app was blamed first in 40 of 40 detected |
+| Blame accuracy: 8 scenarios with a known culprit plus a decoy (CPU, memory, disk read/write, download, upload, shell loops of short-lived `dd`) | 66 trials: 63 detected (95.5%); the right app was blamed first in 63 of 63 detected. The 3 misses: 2 CPU trials that started right after another CPU spike (one inside the 30 s cooldown, one at a 62% baseline, see Limits), 1 shell-loop read |
 | Combined stress: all cores, 2 GB allocation, fsync writer, downloads and a loopback flood for 120 s | no tick lag on root/eBPF and non-root instances; whyslow used 1.3-1.7% of one core; 1 bug: init was charged the whole lives of orphans it reaped (30,095% CPU in one second); fixed |
 | `kill -9` at random moments, 15 times | `PRAGMA integrity_check` ok every time; a hard kill loses at most the last unflushed batch (a few seconds) |
 | Non-root, no battery, no thermal zones, `doctor` as user and root | correct fallbacks and messages; `doctor --db` added |
@@ -185,7 +185,7 @@ Shell loops (`while :; do dd ...; done`) were blamed on `bash` before the fix (6
 - Battery hogs are an estimate: there is no per-app energy counter, so each window's drain is split by an activity score dominated by CPU time. The screen, radio and GPU belong to no app. Battery and thermal code is tested with fixtures only; the VM used for development has neither.
 - fentry/fexit mode is unit-tested but has not been loaded on a live kernel (see above). Socket-owner mode cannot attribute MPTCP subflows.
 - Processes that start and exit between two ticks are only visible through the parent they credit their work to. For shell loops and similar wrappers that work goes to the command the wrapper was last seen running; otherwise to the parent.
-- When CPU use is already high (above about 45%), the CPU threshold is capped at 90%, so a rise that stays below 90% is not reported (measured: 62% to 88% during fuzzing, no mystery).
+- When CPU use is already high (above about 45%), the CPU threshold is capped at 90%, so a rise that stays below 90% is not reported (measured: 62% to 88% during fuzzing, no mystery). After a spike closes, the same resource has a 30 s cooldown before a new one can open.
 - GPU usage is not tracked.
 - Linux only.
 

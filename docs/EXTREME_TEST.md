@@ -48,6 +48,10 @@ Box: 4 vCPU, 8 GB, Debian 12, kernel 6.1, no BPF JIT. Binary /tmp/wsx/whyslow (g
 - net_rx rerun with other mirrors (19:29-19:34): 5/5 detected, 5/5 curl (share 1.0).
 - TOTAL T5: 42 valid trials (3 invalidated by the remote 429); 40 detected (95.2%); top-blamed app correct in 40/40 detected (100%); end-to-end 40/42 = 95.2%.
 
+### T5 part 3: rerun on the final binary (19:49-20:15 UTC, commit 1d8fa83 code, soak run 4)
+- `python3 blamebench.py 3` + `python3 blamebench.py 3 disk_write_loop,disk_read_loop` (spikes paused): 24 trials, 23 detected, 23/23 blamed correctly. The miss is again the first cpu trial, started 14 s after a `make fuzz` CPU spike (mystery #4) closed at 19:49:09.5: the 30 s cooldown ran to 19:49:39.5, leaving too little of the 20 s load to meet the 3-sample sustain. (Its detector baseline was 1.5%, not the raw 72% median: samples inside open spikes do not enter the baseline.)
+- COMBINED T5 (both runs): 66 valid trials, 63 detected (95.5%), top-blamed app correct in 63/63 detected (100%). Misses: 2 cpu trials that started right after another CPU spike (one at a 62% baseline under the 90% cap, one inside the 30 s cooldown; both by design), 1 disk_read_loop (not explained; its database was replaced at the soak restart).
+
 ### T3 combined stress (19:37-19:39 UTC) 1 BUG FIXED
 - `/tmp/wsx/stress.sh 120`: stresscpu.py (4 burners, all cores), memhog 2 GB, diskwriter (fsync loop), internet curl loop at 20 MB/s, loopback curl flood against python http.server. Watched by the soak (root, eBPF, 7781) and a second non-root instance (7785). (spikes.sh soakburn overlapped the first 40 s.)
 - No tick lag: 125 points in the 124 s window, max gap 1 s, on both instances. whyslow CPU over the stress: 1.37% (eBPF) and 1.35% (non-root) of one core; RSS 27.5 -> 27.7 MB and 19.6 -> 20.1 MB. No warnings/errors in either log.
