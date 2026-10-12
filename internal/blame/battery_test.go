@@ -13,7 +13,7 @@ func batt(status string, pct, wh float64) *model.Battery {
 
 func TestBatteryWindowAttribution(t *testing.T) {
 	tr := NewBatteryTracker(DefaultBatteryConfig())
-	var got []*BatteryWindow
+	var got []*model.BatteryWindow
 	// 6 minutes on battery: draining 2% and 1 Wh per minute.
 	for i := 0; i <= 360; i++ {
 		s := &model.Snapshot{TS: onset.Add(time.Duration(i) * time.Second),

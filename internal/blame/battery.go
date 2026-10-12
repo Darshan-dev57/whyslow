@@ -30,24 +30,6 @@ func DefaultBatteryConfig() BatteryConfig {
 	return BatteryConfig{Window: 5 * time.Minute, MinWindow: time.Minute, MinShare: 0.01}
 }
 
-// AppDrain is one app's estimated part of a window's drain.
-type AppDrain struct {
-	App   string  `json:"app"`
-	Share float64 `json:"share"`
-	Wh    float64 `json:"wh"`  // 0 when the battery reports no energy
-	Pct   float64 `json:"pct"` // percentage points of battery
-}
-
-// BatteryWindow is a closed stretch of time on battery.
-type BatteryWindow struct {
-	Start    time.Time  `json:"start"`
-	End      time.Time  `json:"end"`
-	DrainWh  float64    `json:"drain_wh"`
-	DrainPct float64    `json:"drain_pct"`
-	AvgWatts float64    `json:"avg_watts"`
-	Apps     []AppDrain `json:"apps"`
-}
-
 // BatteryTracker accumulates activity while discharging. Feed it every
 // snapshot; it returns a window when one closes.
 type BatteryTracker struct {
@@ -71,7 +53,7 @@ func NewBatteryTracker(cfg BatteryConfig) *BatteryTracker {
 }
 
 // Observe feeds one snapshot.
-func (t *BatteryTracker) Observe(s *model.Snapshot) *BatteryWindow {
+func (t *BatteryTracker) Observe(s *model.Snapshot) *model.BatteryWindow {
 	b := s.Sys.Battery
 	if !b.Discharging() {
 		return t.close()
@@ -113,7 +95,7 @@ func (t *BatteryTracker) begin(ts time.Time, b *model.Battery) {
 	t.score = map[string]float64{}
 }
 
-func (t *BatteryTracker) close() *BatteryWindow {
+func (t *BatteryTracker) close() *model.BatteryWindow {
 	if !t.open {
 		return nil
 	}
@@ -121,7 +103,7 @@ func (t *BatteryTracker) close() *BatteryWindow {
 	if t.last.Sub(t.start) < t.cfg.MinWindow {
 		return nil
 	}
-	w := &BatteryWindow{Start: t.start, End: t.last, DrainPct: math.Max(0, t.startPct-t.endPct)}
+	w := &model.BatteryWindow{Start: t.start, End: t.last, DrainPct: math.Max(0, t.startPct-t.endPct)}
 	if t.hasWh {
 		w.DrainWh = math.Max(0, t.startWh-t.endWh)
 	}
@@ -140,7 +122,7 @@ func (t *BatteryTracker) close() *BatteryWindow {
 		if share < t.cfg.MinShare {
 			continue
 		}
-		w.Apps = append(w.Apps, AppDrain{App: app, Share: share, Wh: share * w.DrainWh, Pct: share * w.DrainPct})
+		w.Apps = append(w.Apps, model.AppDrain{App: app, Share: share, Wh: share * w.DrainWh, Pct: share * w.DrainPct})
 	}
 	sort.Slice(w.Apps, func(i, j int) bool {
 		if w.Apps[i].Share != w.Apps[j].Share {

@@ -231,3 +231,22 @@ func (m *Mystery) TopApp() (string, float64) {
 	}
 	return m.Culprits[0].App, m.Culprits[0].Share
 }
+
+// AppDrain is one app's estimated part of a window's drain.
+type AppDrain struct {
+	App   string  `json:"app"`
+	Share float64 `json:"share"`
+	Wh    float64 `json:"wh"`  // 0 when the battery reports no energy
+	Pct   float64 `json:"pct"` // percentage points of battery
+}
+
+// BatteryWindow is a closed stretch of time on battery with its estimated
+// per-app drain.
+type BatteryWindow struct {
+	Start    time.Time  `json:"start"`
+	End      time.Time  `json:"end"`
+	DrainWh  float64    `json:"drain_wh"`
+	DrainPct float64    `json:"drain_pct"`
+	AvgWatts float64    `json:"avg_watts"`
+	Apps     []AppDrain `json:"apps"`
+}
