@@ -259,21 +259,10 @@ func (c *Collector) sampleProcs(now time.Time, up, secs float64, first bool) (ma
 	// parent's /proc/[pid]/io. Children that lived and died between two
 	// samples are only visible that way. To avoid counting children we did
 	// see twice, their last-seen totals are credited back to the parent.
-	type credit struct{ ticks, read, wrote uint64 }
-	credits := map[int]credit{}
-	for pid, ps := range c.procs {
-		if ps.seen == c.n {
-			continue
-		}
-		cr := credits[ps.ppid]
-		cr.ticks += ps.ticks + ps.cticks
-		if ps.ioOK {
-			cr.read += ps.io.ReadBytes
-			cr.wrote += ps.io.WriteBytes
-		}
-		credits[ps.ppid] = cr
-		delete(c.procs, pid)
-	}
+	// A chain can die in one interval (make -> sh -> cc): the parent's jump
+	// then includes the whole chain, so each dead process passes on its own
+	// last-seen totals plus those of its dead children.
+	credits := c.reapCredits()
 
 	type delta struct{ ticks, read, wrote uint64 }
 	deltas := make(map[int]delta, len(reads))
@@ -351,6 +340,55 @@ func (c *Collector) sampleProcs(now time.Time, up, secs float64, first bool) (ma
 		}
 	}
 	return accs, nil
+}
+
+type credit struct{ ticks, read, wrote uint64 }
+
+func (cr *credit) add(o credit) {
+	cr.ticks += o.ticks
+	cr.read += o.read
+	cr.wrote += o.wrote
+}
+
+// reapCredits removes processes that were not seen in this sample and
+// returns, per live parent PID, the totals already counted on its dead
+// descendants.
+func (c *Collector) reapCredits() map[int]credit {
+	dead := map[int]*procState{}
+	for pid, ps := range c.procs {
+		if ps.seen != c.n {
+			dead[pid] = ps
+			delete(c.procs, pid)
+		}
+	}
+	kids := map[int][]int{}
+	for pid, ps := range dead {
+		kids[ps.ppid] = append(kids[ps.ppid], pid)
+	}
+	var total func(pid, depth int) credit
+	total = func(pid, depth int) credit {
+		ps := dead[pid]
+		cr := credit{ticks: ps.ticks + ps.cticks}
+		if ps.ioOK {
+			cr.read, cr.wrote = ps.io.ReadBytes, ps.io.WriteBytes
+		}
+		if depth < 64 { // PIDs are reused, so guard against a cycle
+			for _, k := range kids[pid] {
+				cr.add(total(k, depth+1))
+			}
+		}
+		return cr
+	}
+	credits := map[int]credit{}
+	for pid, ps := range dead {
+		if _, parentDead := dead[ps.ppid]; parentDead {
+			continue // counted in its parent's total
+		}
+		cr := credits[ps.ppid]
+		cr.add(total(pid, 0))
+		credits[ps.ppid] = cr
+	}
+	return credits
 }
 
 // sub is a - b, floored at zero: counters that went backwards mean nothing.

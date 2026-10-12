@@ -251,6 +251,36 @@ func TestReapedChildrenAreCountedOnce(t *testing.T) {
 	}
 }
 
+// A test binary runs "timeout 5 dd": dd burns CPU, then dd and timeout
+// both exit between two samples. The test binary's cutime jumps by both
+// totals; only the work done after their last sighting is new.
+func TestDeadChainIsCreditedOnce(t *testing.T) {
+	fp := newFakeProc(t)
+	clk := &clock{time.Unix(1700001000, 0)}
+	fp.system(0, 1000, 500, 0, 0, 0, 0)
+	fp.task(fakeTask{pid: 1, comm: "systemd", cmdline: "systemd\x00", start: 1})
+	fp.task(fakeTask{pid: 60, ppid: 1, comm: "app.test", cmdline: "app.test\x00", start: 100})
+	fp.task(fakeTask{pid: 61, ppid: 60, comm: "timeout", cmdline: "timeout\x005\x00dd\x00", ticks: 1, start: 200})
+	fp.task(fakeTask{pid: 62, ppid: 61, comm: "dd", cmdline: "dd\x00", ticks: 300, start: 201})
+	c, err := New(Options{Proc: procfs.New(fp.root), Now: clk.now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	clk.t = clk.t.Add(time.Second)
+	fp.system(101, 1000, 501, 0, 0, 0, 0)
+	fp.remove(61)
+	fp.remove(62)
+	// timeout's final total: 2 own + dd's 400; dd ran 100 more ticks before exiting
+	fp.task(fakeTask{pid: 60, ppid: 1, comm: "app.test", cmdline: "app.test\x00", cticks: 2 + 400, start: 100})
+	s, err := c.Sample()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a := s.App("app.test"); a == nil || !near(a.CPU, 101) {
+		t.Errorf("app.test = %+v, want cpu 101 (1 tick of timeout + 100 of dd since last seen)", a)
+	}
+}
+
 func TestExecRenamesProcess(t *testing.T) {
 	fp := newFakeProc(t)
 	clk := &clock{time.Unix(1700001000, 0)}
