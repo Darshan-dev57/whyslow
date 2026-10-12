@@ -156,3 +156,37 @@ Under `-race` the database writer is slower, the 120-frame queue filled, and
 frames were dropped as designed. The test then failed on timing. The test
 now gives the sink a queue big enough for its 200 frames and asserts that
 nothing was dropped.
+
+## Found by the extreme tests
+
+### 14. Work of unsampled children of a shell loop goes to the command
+
+A loop such as `while :; do dd ...; done` runs commands that live less than
+one sampling interval. Most runs are never seen; their CPU and I/O only show
+up in the shell's own counters when it reaps them, so the shell was blamed
+(66% "bash", 32% "dd" in a measured run). For a wrapper (a shell running
+inline code or reading commands, `xargs`, `timeout`, `env`, `nice` and the
+like) that unsampled work is now charged to the app of the child it was last
+seen running, if that was within three samples. Sessions such as init, sshd
+and terminals are launchers but not wrappers: they adopt unrelated orphans,
+so the heuristic would guess wrong there and is not applied. If no child was
+ever seen (a loop of `true`), the shell keeps the charge. Measured after the
+change: 92% "dd" for the same loop.
+
+### 15. A panicking sampling tick is skipped, not fatal
+
+A process whose whole command line was a single space crashed the daemon,
+root instance included, through an index out of range in the name parser.
+The bug is fixed, and `pipeline.Run` now also recovers a panic in one tick,
+logs it (stack the first time) and keeps sampling. A monitor that any user
+can take down with one odd process name is worse than one that drops a
+second of data.
+
+### 16. Stricter API input
+
+`/api/report?date=9999-12-31` returned 200 with an empty body, because the
+end of that day is in year 10000 and JSON encoding failed after the header
+was written. Responses are now encoded before anything is written (500 on
+failure), report dates must be in 1970..9998, and windows below one second
+are rejected with 400. `doctor` gained `--db` so it checks the database a
+`run --db` actually uses.
