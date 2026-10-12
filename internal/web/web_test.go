@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -188,8 +189,30 @@ func TestReport(t *testing.T) {
 	if s := r.Sections[0]; s.Resource != "cpu" || s.Apps[0].App != "builder" || s.Apps[0].Value != 60 {
 		t.Errorf("cpu section = %+v", s)
 	}
-	if rec := get(t, srv, "/api/report?date=12-10-2026"); rec.Code != 400 {
-		t.Errorf("bad date: %d", rec.Code)
+	for _, d := range []string{"12-10-2026", "9999-12-31", "1900-01-01", "2026-02-30"} {
+		if rec := get(t, srv, "/api/report?date="+d); rec.Code != 400 {
+			t.Errorf("date %s: code %d", d, rec.Code)
+		}
+	}
+}
+
+func TestWriteJSONEncodeError(t *testing.T) {
+	// A value json cannot encode must give a 500 with a body, not a 200
+	// with an empty one (found with /api/report?date=9999-12-31, whose end
+	// time falls in year 10000).
+	rec := httptest.NewRecorder()
+	writeJSON(rec, map[string]any{"x": math.NaN()})
+	if rec.Code != 500 || !strings.Contains(rec.Body.String(), "error") {
+		t.Errorf("code %d body %q", rec.Code, rec.Body)
+	}
+}
+
+func TestBadWindows(t *testing.T) {
+	srv, _, _ := fixture(t)
+	for _, q := range []string{"/api/apps?window=1ns", "/api/apps?window=-5m", "/api/apps?window=25h", "/api/mysteries?since=0s"} {
+		if rec := get(t, srv, q); rec.Code != 400 {
+			t.Errorf("%s: code %d", q, rec.Code)
+		}
 	}
 }
 

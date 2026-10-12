@@ -141,12 +141,16 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 }
 
 func writeJSON(w http.ResponseWriter, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "no-store")
-	if err := json.NewEncoder(w).Encode(v); err != nil {
-		// headers are gone; nothing useful to tell the client
+	// Encode before writing anything: an encoding error after the header is
+	// out would leave the client with a 200 and an empty body.
+	b, err := json.Marshal(v)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Write(append(b, '\n'))
 }
 
 func writeError(w http.ResponseWriter, code int, msg string) {
@@ -310,8 +314,8 @@ func parseWindow(v string, def, limit time.Duration) (time.Duration, error) {
 		return def, nil
 	}
 	d, err := time.ParseDuration(v)
-	if err != nil || d <= 0 || d > limit {
-		return 0, fmt.Errorf("bad duration %q: use e.g. 5m or 24h, at most %s", v, limit)
+	if err != nil || d < time.Second || d > limit {
+		return 0, fmt.Errorf("bad duration %q: use e.g. 5m or 24h, from 1s to %s", v, limit)
 	}
 	return d, nil
 }
@@ -419,6 +423,9 @@ func (s *Server) report(w http.ResponseWriter, r *http.Request) {
 	day := s.opts.Now()
 	if v := r.URL.Query().Get("date"); v != "" {
 		d, err := time.ParseInLocation("2006-01-02", v, day.Location())
+		if err == nil && (d.Year() < 1970 || d.Year() > 9998) {
+			err = errors.New("date out of range")
+		}
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "date must be YYYY-MM-DD")
 			return
