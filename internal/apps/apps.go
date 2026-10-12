@@ -70,7 +70,7 @@ var launchers = map[string]bool{
 // or comm when there is no command line.
 func Exe(p *Proc) string {
 	if len(p.Cmdline) == 0 || p.Cmdline[0] == "" {
-		return p.Comm
+		return comm(p)
 	}
 	arg0 := p.Cmdline[0]
 	// Programs that rewrite their title often pack everything into argv[0].
@@ -78,15 +78,26 @@ func Exe(p *Proc) string {
 	if len(p.Cmdline) == 1 && strings.ContainsAny(arg0, " :") {
 		f := strings.Fields(arg0)
 		if len(f) == 0 {
-			return p.Comm
+			return comm(p)
 		}
 		arg0 = strings.TrimSuffix(f[0], ":")
 	}
 	base := strings.TrimPrefix(path.Base(arg0), "-") // "-bash" is a login shell
 	if base == "." || base == "/" || base == "" {
-		return p.Comm
+		return comm(p)
 	}
 	return base
+}
+
+// Unnamed is the app name of a process with neither a command line nor a
+// name (prctl can set an empty comm).
+const Unnamed = "(unnamed)"
+
+func comm(p *Proc) string {
+	if strings.TrimSpace(p.Comm) == "" {
+		return Unnamed
+	}
+	return p.Comm
 }
 
 // IsLauncher reports whether children of p should be separate apps.

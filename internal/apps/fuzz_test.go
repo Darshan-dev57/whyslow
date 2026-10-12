@@ -17,6 +17,14 @@ func TestBlankTitle(t *testing.T) {
 	}
 }
 
+func TestNoEmptyName(t *testing.T) {
+	for _, p := range []*Proc{{Comm: ""}, {Comm: "  "}, {Comm: "", Cmdline: []string{"/"}}, {Comm: "", Cmdline: []string{" "}}} {
+		if got := OwnName(p); got != Unnamed {
+			t.Errorf("OwnName(%+v) = %q", p, got)
+		}
+	}
+}
+
 // FuzzGroup builds a small process tree from fuzz input and checks that
 // naming and grouping never panic and give every process a name.
 func FuzzGroup(f *testing.F) {
@@ -38,7 +46,7 @@ func FuzzGroup(f *testing.F) {
 		procs[5] = &Proc{PID: 5, PPID: 1, Comm: "sudo", Cmdline: []string{"sudo", "x"}}
 		names := Group(procs)
 		for pid := range procs {
-			if _, ok := names[pid]; !ok {
+			if n, ok := names[pid]; !ok || n == "" {
 				t.Fatalf("pid %d has no name", pid)
 			}
 		}
