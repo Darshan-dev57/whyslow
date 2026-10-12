@@ -448,3 +448,28 @@ func TestOrphansReapedByInitAreNotChargedTwice(t *testing.T) {
 		t.Errorf("init charged for the orphans' whole lives: cpu %.0f%%, write %.0f", a.CPU, a.DiskWrite)
 	}
 }
+
+// Without eBPF nothing pruned the PID -> app map, so it grew by one entry
+// for every process ever seen (a leak under process churn).
+func TestAppMapDoesNotGrowWithoutNet(t *testing.T) {
+	fp := newFakeProc(t)
+	clk := &clock{time.Unix(1700001000, 0)}
+	fp.system(0, 1000, 500, 0, 0, 0, 0)
+	fp.task(fakeTask{pid: 1, comm: "systemd", cmdline: "systemd\x00", start: 1})
+	c, err := New(Options{Proc: procfs.New(fp.root), Now: clk.now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 50; i++ {
+		clk.t = clk.t.Add(time.Second)
+		fp.system(uint64(i), 1000+uint64(i), 501+float64(i), 0, 0, 0, 0)
+		fp.remove(100 + i - 1)
+		fp.task(fakeTask{pid: 100 + i, ppid: 1, comm: "short", cmdline: "short\x00", start: 50100 + uint64(i)*100})
+		if _, err := c.Sample(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := len(c.appOf); n > 2 {
+		t.Errorf("pid->app map holds %d entries for 2 live processes", n)
+	}
+}

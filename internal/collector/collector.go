@@ -395,7 +395,10 @@ func (c *Collector) sampleProcs(now time.Time, up, secs float64, first bool) (ma
 		if a.Started.IsZero() || ps.startedAt.Before(a.Started) {
 			a.Started = ps.startedAt
 		}
-		c.appOf[uint32(pid)] = name
+		if c.opts.Net != nil {
+			// only per-app network needs names of exited PIDs; addNet prunes it
+			c.appOf[uint32(pid)] = name
+		}
 	}
 
 	for pid, name := range names {
