@@ -111,6 +111,9 @@ func TestStoreSink(t *testing.T) {
 	defer st.Close()
 	sink := NewStoreSink(st, nil)
 	sink.FlushEvery = 10 * time.Millisecond
+	// the test feeds 200 frames at once; in production they come one per
+	// second and the 120-frame queue is two minutes of slack
+	sink.frames = make(chan *model.Snapshot, 256)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error)
 	go func() { done <- sink.Run(ctx) }()
@@ -129,6 +132,9 @@ func TestStoreSink(t *testing.T) {
 	cancel()
 	if err := <-done; err != nil {
 		t.Fatal(err)
+	}
+	if sink.dropped != 0 {
+		t.Errorf("dropped %d frames", sink.dropped)
 	}
 	pts, err := st.Timeline(context.Background(), model.DiskWrite, t0, t0.Add(time.Hour), "dd")
 	if err != nil || len(pts) != 200 || pts[160].V != 80e6 {
