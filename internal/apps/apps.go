@@ -34,7 +34,7 @@ const KernelApp = "kernel"
 var known = map[string]string{
 	"chrome": "chrome", "google-chrome": "chrome", "google-chrome-stable": "chrome",
 	"chrome_crashpad_handler": "chrome",
-	"chromium": "chromium", "chromium-browser": "chromium",
+	"chromium":                "chromium", "chromium-browser": "chromium",
 	"firefox": "firefox", "firefox-esr": "firefox", "firefox-bin": "firefox",
 	"brave": "brave", "brave-browser": "brave", "msedge": "edge", "opera": "opera", "vivaldi-bin": "vivaldi",
 	"code": "vscode", "code-oss": "vscode", "codium": "vscode", "cursor": "cursor",
