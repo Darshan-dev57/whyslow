@@ -200,3 +200,15 @@ counted in samples, shrank the two-minute baseline to twelve seconds. Rather
 than average sub-second samples in the writer and rescale every window, the
 flag now accepts whole seconds; tests that need speed drive the pipeline
 directly with their own scaled windows.
+
+### 18. Credits for reaped children follow the reaper
+
+Work of a reaped child shows up in whichever process reaped it, and when a
+parent dies first that is init (or a subreaper), not the parent's parent
+that the credit was computed for. At the end of a stress run, `timeout`
+killed a multiprocessing parent; init reaped its four children and was
+charged their whole lives, 300 s of CPU in one second. Credits that find no
+matching jump now go to a pool, and processes whose cutime jumped by more
+than their own credits (the reaper) draw from it, in PID order. I/O is
+pooled the same way but only drawn by such a reaper, because a process's own
+I/O and its reaped children's share one counter.
