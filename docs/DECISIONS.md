@@ -190,3 +190,13 @@ was written. Responses are now encoded before anything is written (500 on
 failure), report dates must be in 1970..9998, and windows below one second
 are rejected with 400. `doctor` gained `--db` so it checks the database a
 `run --db` actually uses.
+
+### 17. `--interval` takes whole seconds only
+
+The flag accepted anything from 100 ms. Measured at 100 ms: the database
+kept 95 rows for 95 s, because rows are keyed by the second and each sample
+replaced the previous one in that second, and the detector's windows, being
+counted in samples, shrank the two-minute baseline to twelve seconds. Rather
+than average sub-second samples in the writer and rescale every window, the
+flag now accepts whole seconds; tests that need speed drive the pipeline
+directly with their own scaled windows.
