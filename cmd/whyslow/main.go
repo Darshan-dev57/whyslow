@@ -26,7 +26,7 @@ Usage:
   whyslow run [--addr 127.0.0.1:7777] [--db PATH] [--ebpf] [--interval 1s]
   whyslow top [--ebpf] [--n 15] [--once]
   whyslow mysteries [--since 24h] [--db PATH]
-  whyslow report [--today | --date YYYY-MM-DD] [--db PATH]
+  whyslow report [--today | --date YYYY-MM-DD] [--json] [--db PATH]
   whyslow doctor
   whyslow version
 
@@ -49,6 +49,8 @@ func main() {
 		err = cmdTop(ctx, args)
 	case "mysteries":
 		err = cmdMysteries(ctx, args)
+	case "report":
+		err = cmdReport(ctx, args)
 	case "version", "--version":
 		fmt.Println("whyslow", version)
 	case "help", "-h", "--help":
