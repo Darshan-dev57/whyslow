@@ -257,6 +257,25 @@ func ParseNetDev(r io.Reader) ([]NetDev, error) {
 	return out, sc.Err()
 }
 
+// Uptime reads /proc/uptime: seconds since boot, on the same clock as the
+// start time of processes.
+func (fs FS) Uptime() (float64, error) {
+	b, err := readTrim(fs.path("uptime"))
+	if err != nil {
+		return 0, err
+	}
+	return ParseUptime(b)
+}
+
+// ParseUptime parses the first field of /proc/uptime.
+func ParseUptime(b []byte) (float64, error) {
+	f := strings.Fields(string(b))
+	if len(f) == 0 {
+		return 0, errors.New("procfs: empty uptime")
+	}
+	return strconv.ParseFloat(f[0], 64)
+}
+
 // PIDs lists the numeric entries of /proc: one per process (thread group).
 func (fs FS) PIDs() ([]int, error) {
 	d, err := os.Open(fs.Root)

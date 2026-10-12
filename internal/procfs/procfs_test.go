@@ -193,3 +193,13 @@ func TestSocketCount(t *testing.T) {
 		t.Errorf("SocketCount = %d, %v; want 3", n, err)
 	}
 }
+
+func TestUptime(t *testing.T) {
+	u, err := fixture.Uptime()
+	if err != nil || u != 350912.25 {
+		t.Errorf("Uptime = %v, %v", u, err)
+	}
+	if _, err := ParseUptime([]byte(" ")); err == nil {
+		t.Error("empty uptime should fail")
+	}
+}
