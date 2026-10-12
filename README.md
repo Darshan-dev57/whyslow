@@ -156,6 +156,7 @@ make race          # same with -race
 make integration   # starts a real CPU + disk burner and asserts a mystery blames it
 make ebpf-test     # root only: loads the eBPF programs and checks curl's bytes
 make lint          # gofmt, go vet, staticcheck
+make fuzz          # every fuzz target, 30 s each (FUZZTIME=300s for the overnight setting)
 ```
 
 CI (GitHub Actions) runs gofmt, vet, staticcheck, race tests, the build, the burner integration test and the root eBPF job.
@@ -168,12 +169,13 @@ An overnight pass on the development VM (4 vCPU, 8 GB, kernel 6.1, no BPF JIT) t
 |---|---|
 | Race detector, all packages + integration + root eBPF test | pass, no races |
 | Fuzzing, 10 targets (9 `/proc` parsers + app grouping), 300 s each | 1 bug: `/proc/[pid]/io` with a key repeated parsed as valid; fixed, input kept as a regression case |
-| Process churn: ~1,100 spawns/s for 120 s, names like `a) b (`, newlines, unicode, 26 chars, 300 zombies | no tick lag (max gap 1 s); 1 crash found: a process whose command line is a single space killed whyslow, root daemon included; fixed, and a panicking tick is now skipped instead of fatal |
+| Process churn: ~1,100 spawns/s for 120 s, and 519,601 processes in 180 s (PIDs wrapped past 4,194,303), names like `a) b (`, newlines, unicode, 26 chars, 300 zombies | no tick lag (max gap 1 s); 1 crash found: a process whose command line is a single space killed whyslow, root daemon included; fixed, and a panicking tick is now skipped instead of fatal |
 | Blame accuracy: 8 scenarios with a known culprit plus a decoy (CPU, memory, disk read/write, download, upload, shell loops of short-lived `dd`) | 66 trials: 63 detected (95.5%); the right app was blamed first in 63 of 63 detected. The 3 misses: 2 CPU trials that started right after another CPU spike (one inside the 30 s cooldown, one at a 62% baseline, see Limits), 1 shell-loop read |
 | Combined stress: all cores, 2 GB allocation, fsync writer, downloads and a loopback flood for 120 s | no tick lag on root/eBPF and non-root instances; whyslow used 1.3-1.7% of one core; 1 bug: init was charged the whole lives of orphans it reaped (30,095% CPU in one second); fixed |
 | `kill -9` at random moments, 15 times | `PRAGMA integrity_check` ok every time; a hard kill loses at most the last unflushed batch (a few seconds) |
 | Non-root, no battery, no thermal zones, `doctor` as user and root | correct fallbacks and messages; `doctor --db` added |
 | Dashboard: 50 concurrent live clients for 60 s plus 5 clients that never read; 33 malformed API URLs | every client got every frame; fds back to baseline after; 1 bug: `/api/report?date=9999-12-31` returned an empty 200, now 400 (encode errors give 500) |
+| Soak: 3 h as root with eBPF, under all the tests above plus a spike every 10 min | RSS flat (median 27.8 MB first hour, 28.2 MB last hour, max 28.8 MB both), 10-11 threads, 18-21 fds, 1.2% of one core on average; database grows ~2 MB/h until retention, WAL steady at 4.3 MB; survived PID wraparound. Reading the code behind the first hour's RSS rise found a slow leak in non-root mode (a PID map never pruned without eBPF); fixed |
 | Sampling at 100 ms | 9 of 10 rows were overwritten (rows are per second); `--interval` now takes whole seconds |
 
 Shell loops (`while :; do dd ...; done`) were blamed on `bash` before the fix (66%), because most `dd` runs end between two samples; their work now goes to the command the loop runs (92% `dd`). Full log of commands and numbers: [docs/EXTREME_TEST.md](docs/EXTREME_TEST.md).

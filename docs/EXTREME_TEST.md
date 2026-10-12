@@ -59,3 +59,22 @@ Box: 4 vCPU, 8 GB, Debian 12, kernel 6.1, no BPF JIT. Binary /tmp/wsx/whyslow (g
 - BUG: app "systemd" (init) got 30,095% CPU in ONE second at the end of the stress. timeout killed the multiprocessing parent, its 4 children were reparented to init, finished and were reaped by init, whose cutime jumped by their whole lives (300 s); the credit for what was already charged went to timeout instead. Fix 1d8fa83: credits that find no matching jump go to a pool that processes with an unexplained cutime jump (the reaper) draw from; I/O likewise but only for such a reaper. Test TestOrphansReapedByInitAreNotChargedTwice (fails before: init 20200% / 4 GB; passes after).
 
 - T3 rerun on the fixed binary (19:45-19:47 UTC, same script, soak run 4 + non-root 7785): 125 points / 124 s, max gap 1 s on both; mysteries on both: cpu -> python:stresscpu.py 0.66 (curl 0.15, http.server 0.07), mem -> memhog 0.95, disk_write -> diskwriter 0.99. Highest app CPU in any second: stresscpu 277% (no init spike). whyslow CPU over the run: 1.66% (eBPF) / 1.31% (non-root) of one core; RSS 21.0 -> 21.5 MB / 20.2 -> 21.2 MB. (The internet download leg got 429 from the remote server; loopback traffic is not part of system network, by design.)
+
+### T4b many apps (20:16-20:21 UTC)
+- `/tmp/wsx/manyapps.sh 300`: 1,000 sleeping processes, each its own app name (`exec -a appN sleep`). Soak instance over 60 s: 6.1% of one core (about 1.2% normally), RSS 28.4 MB, 60 points / 60 s, max gap 1 s; /api/live first byte 1.2 ms. (/api/apps returns the top 15.)
+
+### T8 soak, interim (21:18 UTC) 1 LEAK FIXED (found by reading the code behind a slowly rising RSS)
+- Soak run 4 RSS: 26.5 MB at 32 min, 28.8 MB at 64 min, 29.3 MB at 94 min; threads 11, fds 20 flat; no warnings.
+- LEAK: the collector's PID -> app map (kept to name the network counters of exited PIDs) was pruned only inside the eBPF path. Without eBPF (non-root, the default) it gained one entry per process ever seen and was never pruned. Fix (commit 'Stop the PID to app map growing without eBPF'): only filled when eBPF is on. Test TestAppMapDoesNotGrowWithoutNet (51 entries for 2 live processes before; <= 2 after). The soak itself runs with eBPF, where the map is pruned.
+
+- Leak check with churn (21:19-21:22 UTC): old binary vs fixed binary, both non-root, side by side, `test/extreme/churn.sh 180` = 519,601 processes in 180 s (about 2,900/s). PID WRAPAROUND happened during this run (PIDs went past 4,194,303 back to low numbers; new pids like 22246). RSS old 19.1 -> 20.1 MB, fixed 19.0 -> 20.2 MB: no measurable difference, because only processes alive at a sample instant enter the map (a few per second, ~100 bytes each). The leak is real but slow (one entry per process ever sampled). Soak run 4 (root) went through the wraparound: alive, RSS 28.6 MB, no warnings.
+
+### T8 soak, final (run 4: 19:43-22:45 UTC, 3.03 h, root, eBPF on, 1 s interval) PASS
+- Sampled every 30 s (363 samples, /tmp/wsx/soak/samples.log). Load during it: the T3 rerun, the 24-trial blame rerun, 1,000 extra processes for 5 min, the 519,601-process churn with PID wraparound, and a 60 s CPU burn or 400 MB direct write every 10 min.
+- RSS: median 27.8 MB (max 28.8) in the first hour vs median 28.2 MB (max 28.8) in the last hour: flat. Threads 10-11. Open fds 18-21 throughout (no fd leak; SSE clients came and went). CPU: 1.22% of one core over the 3 h (1.51% in the first hour with the heavy tests, 1.02% in the last). DB grew linearly ~2 MB/h (2.1 MB at 1 h, 4.0 MB at 2 h, 6.1 MB at 3 h; bounded by the 24 h / 6 h raw retention), WAL steady at 4.3 MB (checkpoints keep up). No warnings or errors in the log. Survived PID wraparound.
+- Earlier soak runs: run 1 died at 14 min from the blank-title crash (T4); runs 2 and 3 were restarted on purpose to put fixes in.
+
+### Final verification (22:48-22:52 UTC)
+- gofmt -l: empty. go vet ./... and with -tags integration,ebpf: clean. staticcheck v0.8.2 -tags integration,ebpf: clean.
+- go test -count=1 ./...: 111 top-level tests (+30 subtests, incl. fuzz seed corpora) pass, 0 fail, 0 skip (was 90 before tonight).
+- go test -race ./... and -race -tags integration: pass. Root eBPF test: all PASS (curl rx 5,329,006 tx 1,104,534).
